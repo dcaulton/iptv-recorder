@@ -2,7 +2,7 @@ from tv_detection_common.models import Channel, Schedule, Recording, RecordingSt
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
-from subprocess import POPEN, PIPE
+from subprocess import Popen, PIPE
 import time
 import threading
 
