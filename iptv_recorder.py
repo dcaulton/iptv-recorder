@@ -9,6 +9,7 @@ from subprocess import Popen, PIPE
 import time
 import threading
 
+print(f"just waking up")
 logger = logging.getLogger(__name__)
 
 # Config
@@ -20,18 +21,19 @@ engine = create_engine(DB_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
 # Quick connectivity + table test
+print(f"testing Database connection")
 try:
     with Session() as session:
         # Simple count query (doesn't care if table is empty)
         result = session.execute(text("SELECT COUNT(*) FROM schedules"))
         count = result.scalar()
-        logger.info(f"Database connection OK. Found {count} entries in schedules table.")
+        print(f"Database connection OK. Found {count} entries in schedules table.")
 except OperationalError as e:
-    logger.warning(f"Connection failed (will retry later): {e}")
+    print(f"Connection failed (will retry later): {e}")
 except DatabaseError as e:
-    logger.warning(f"Database error (table missing or permission issue?): {e}")
+    print(f"Database error (table missing or permission issue?): {e}")
 except Exception as e:
-    logger.error(f"Unexpected error during DB test: {e}")
+    print(f"Unexpected error during DB test: {e}")
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
