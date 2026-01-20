@@ -1,15 +1,37 @@
 from tv_detection_common.models import Channel, Schedule, Recording, RecordingStatus
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import OperationalError, DatabaseError
 from datetime import datetime, timedelta
+import logging
+import os
 from subprocess import Popen, PIPE
 import time
 import threading
 
+logger = logging.getLogger(__name__)
+
 # Config
-DB_URL = "sqlite:///tv_detection.db"  # or postgresql://user:pass@host/db
-engine = create_engine(DB_URL)
+DB_URL = os.getenv("DB_URL")
+if not DB_URL:
+    logger.error("DB_URL environment variable not set. Exiting.")
+    exit(1)
+engine = create_engine(DB_URL, echo=False)
 Session = sessionmaker(bind=engine)
+
+# Quick connectivity + table test
+try:
+    with Session() as session:
+        # Simple count query (doesn't care if table is empty)
+        result = session.execute(text("SELECT COUNT(*) FROM schedules"))
+        count = result.scalar()
+        logger.info(f"Database connection OK. Found {count} entries in schedules table.")
+except OperationalError as e:
+    logger.warning(f"Connection failed (will retry later): {e}")
+except DatabaseError as e:
+    logger.warning(f"Database error (table missing or permission issue?): {e}")
+except Exception as e:
+    logger.error(f"Unexpected error during DB test: {e}")
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
