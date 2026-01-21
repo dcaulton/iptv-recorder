@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir -r requirements_iptv_recorder.txt
 
 COPY iptv_recorder.py .
 
-CMD ["python", "iptv_recorder.py"]
+CMD ["python", "-u", "iptv_recorder.py"]

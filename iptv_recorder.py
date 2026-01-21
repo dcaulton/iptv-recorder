@@ -2,15 +2,24 @@ from tv_detection_common.models import Channel, Schedule, Recording, RecordingSt
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError, DatabaseError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
+import sys
 import os
 from subprocess import Popen, PIPE
 import time
 import threading
 
 print(f"just waking up")
+# Force logging to stdout (Docker-friendly), level INFO
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    stream=sys.stdout,  # explicit stdout (Docker captures this)
+    force=True          # override any existing config
+)
 logger = logging.getLogger(__name__)
+logger.info(f"just waking up in the logger")
 
 # Config
 DB_URL = os.getenv("DB_URL")
@@ -21,19 +30,19 @@ engine = create_engine(DB_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
 # Quick connectivity + table test
-print(f"testing Database connection")
+logger.info(f"testing Database connection")
 try:
     with Session() as session:
         # Simple count query (doesn't care if table is empty)
         result = session.execute(text("SELECT COUNT(*) FROM schedules"))
         count = result.scalar()
-        print(f"Database connection OK. Found {count} entries in schedules table.")
+        logger.info(f"Database connection OK. Found {count} entries in schedules table.")
 except OperationalError as e:
-    print(f"Connection failed (will retry later): {e}")
+    logger.error(f"Connection failed (will retry later): {e}")
 except DatabaseError as e:
-    print(f"Database error (table missing or permission issue?): {e}")
+    logger.error(f"Database error (table missing or permission issue?): {e}")
 except Exception as e:
-    print(f"Unexpected error during DB test: {e}")
+    logger.error(f"Unexpected error during DB test: {e}")
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
@@ -79,7 +88,7 @@ def record_stream(schedule_id):
 
     process = POPEN(cmd, stdout=PIPE, stderr=PIPE)
     stdout, stderr = process.communicate()
-    recording.completed_at = datetime.utcnow()
+    recording.completed_at = datetime.now(timezone.utc)
     if process.returncode == 0:
         recording.status = RecordingStatus.COMPLETED
         recording.file_path = output_file
@@ -91,9 +100,10 @@ def record_stream(schedule_id):
     session.close()
 
 def scheduler_loop():
+    print("entering scheduler loop")
     while True:
         session = Session()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         pending = session.query(Schedule).filter(Schedule.start_time <= now + timedelta(minutes=5), Schedule.start_time > now - timedelta(minutes=5)).all()
 
         threads = []
