@@ -1,3 +1,4 @@
 sqlalchemy
+requests
 psycopg2-binary
 git+https://github.com/dcaulton/tv-detection-common.git

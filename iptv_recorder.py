@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 import logging
 import sys
 import os
-from subprocess import Popen, PIPE
+import subprocess
 import time
+import requests
 import threading
 
 print(f"just waking up")
@@ -43,6 +44,64 @@ except DatabaseError as e:
     logger.error(f"Database error (table missing or permission issue?): {e}")
 except Exception as e:
     logger.error(f"Unexpected error during DB test: {e}")
+
+def test_vpn_connect_and_stream():
+    # Step 1: Request VPN manager to connect to UK (gb)
+    connect_url = "http://localhost:8080/connect?country=gb"
+    try:
+        response = requests.get(connect_url)
+        if response.status_code != 200:
+            print(f"Failed to request VPN connect: {response.status_code} - {response.text}")
+            return
+        print("VPN connect request sent successfully.")
+    except Exception as e:
+        print(f"Error requesting VPN connect: {e}")
+        return
+
+    # Step 2: Wait for success by polling a assumed /status endpoint
+    # Assumption: VPN manager has a /status endpoint that returns JSON like {"status": "connected", "country": "gb"}
+    # Adjust the polling logic if the actual status endpoint differs.
+    status_url = "http://localhost:8080/status"
+    connected = False
+    max_attempts = 12  # Poll every 10 seconds for up to 2 minutes
+    for attempt in range(max_attempts):
+        try:
+            status_response = requests.get(status_url)
+            print(f"status response is [{status_response.status_code}], [{status_response.json()}]")
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                if status_data.get("status") == "connected" and status_data.get("country") == "gb":
+                    connected = True
+                    print("VPN connected successfully to UK.")
+                    break
+        except Exception as e:
+            print(f"Error checking status (attempt {attempt + 1}): {e}")
+        time.sleep(10)
+    
+    if not connected:
+        print("Failed to confirm VPN connection after polling.")
+        return
+
+    # Step 3: Tune (probe) the BBC Two Northern Ireland stream using ffprobe
+    # This checks if the stream is accessible without actually recording/streaming.
+    stream_url = "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8"
+    try:
+        # Run ffprobe to get stream info; -v error suppresses verbose output
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
+            capture_output=True,
+            text=True,
+            timeout=30  # Timeout after 30 seconds to avoid hanging
+        )
+        if result.returncode == 0:
+            print("Successfully probed the stream.")
+            print("Stream info:\n" + result.stdout)
+        else:
+            print(f"Failed to probe the stream: {result.stderr}")
+    except subprocess.TimeoutExpired:
+        print("ffprobe timed out while probing the stream.")
+    except Exception as e:
+        print(f"Error probing the stream: {e}")
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
@@ -86,7 +145,7 @@ def record_stream(schedule_id):
         output_file
     ]
 
-    process = POPEN(cmd, stdout=PIPE, stderr=PIPE)
+    process = POPEN(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = process.communicate()
     recording.completed_at = datetime.now(timezone.utc)
     if process.returncode == 0:
@@ -120,4 +179,5 @@ def scheduler_loop():
         time.sleep(60)  # check every minute
 
 if __name__ == "__main__":
+    test_vpn_connect_and_stream()
     scheduler_loop()
