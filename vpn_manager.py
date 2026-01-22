@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from subprocess import Popen, PIPE
+import sys
 import os
+import logging
 import threading
 import signal
 

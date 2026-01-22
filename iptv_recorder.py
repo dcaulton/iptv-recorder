@@ -50,58 +50,65 @@ def test_vpn_connect_and_stream():
     connect_url = "http://localhost:8080/connect?country=gb"
     try:
         response = requests.get(connect_url)
-        if response.status_code != 200:
-            print(f"Failed to request VPN connect: {response.status_code} - {response.text}")
+        response_data = response.json() if response.content else {}
+        if response.status_code != 200 or response_data.get("status") != "started":
+            logger.error(f"Failed to request VPN connect: {response.status_code} - {response_data}")
+            print(f"Connect response: {response_data}")  # Debug print
             return
-        print("VPN connect request sent successfully.")
+        logger.info("VPN connect request sent successfully.")
+        print(f"Connect response: {response_data}")  # Debug print to see PID if started
     except Exception as e:
-        print(f"Error requesting VPN connect: {e}")
+        logger.error(f"Error requesting VPN connect: {e}")
         return
 
-    # Step 2: Wait for success by polling a assumed /status endpoint
-    # Assumption: VPN manager has a /status endpoint that returns JSON like {"status": "connected", "country": "gb"}
-    # Adjust the polling logic if the actual status endpoint differs.
+    # Step 2: Wait for success by polling /status endpoint
+    # Assumption: /status should eventually return something like {"status": "connected", "country": "gb"}
+    # If it's always {}, implement /status in vpn-manager to check process.poll() is None (alive) and parse OpenVPN output for "Initialization Sequence Completed"
     status_url = "http://localhost:8080/status"
     connected = False
-    max_attempts = 12  # Poll every 10 seconds for up to 2 minutes
+    max_attempts = 60  # Poll every 5 seconds for up to 5 minutes
     for attempt in range(max_attempts):
         try:
             status_response = requests.get(status_url)
-            print(f"status response is [{status_response.status_code}], [{status_response.json()}]")
-            if status_response.status_code == 200:
-                status_data = status_response.json()
-                if status_data.get("status") == "connected" and status_data.get("country") == "gb":
-                    connected = True
-                    print("VPN connected successfully to UK.")
-                    break
+            status_data = status_response.json() if status_response.content else {}
+            logger.info(f"Status check (attempt {attempt + 1}): {status_data}")
+            print(f"Status response: {status_data}")  # Debug print
+            if status_data.get("status") == "connected" and status_data.get("country") == "gb":
+                connected = True
+                logger.info("VPN connected successfully to UK.")
+                break
+            elif status_data.get("status") == "failed":
+                logger.error(f"VPN connection failed: {status_data.get('message', 'Unknown error')}")
+                return
         except Exception as e:
-            print(f"Error checking status (attempt {attempt + 1}): {e}")
-        time.sleep(10)
+            logger.error(f"Error checking status (attempt {attempt + 1}): {e}")
+        time.sleep(5)
     
     if not connected:
-        print("Failed to confirm VPN connection after polling.")
+        logger.error("Failed to confirm VPN connection after polling. Check vpn-manager logs for OpenVPN errors (e.g., auth failure).")
+        print("Tip: NordVPN requires credentials. Ensure vpn-manager provides --auth-user-pass to OpenVPN.")
         return
 
     # Step 3: Tune (probe) the BBC Two Northern Ireland stream using ffprobe
-    # This checks if the stream is accessible without actually recording/streaming.
     stream_url = "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8"
     try:
-        # Run ffprobe to get stream info; -v error suppresses verbose output
+        # Run ffprobe to get stream info; -v error suppresses verbose but captures errors
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
             capture_output=True,
             text=True,
-            timeout=30  # Timeout after 30 seconds to avoid hanging
+            timeout=60  # Longer timeout for potential network delays
         )
         if result.returncode == 0:
-            print("Successfully probed the stream.")
+            logger.info("Successfully probed the stream.")
             print("Stream info:\n" + result.stdout)
         else:
-            print(f"Failed to probe the stream: {result.stderr}")
+            logger.error(f"Failed to probe the stream (return code {result.returncode}): {result.stderr}")
+            print(f"Probe error: {result.stderr}")  # Debug print for geo-block or other issues
     except subprocess.TimeoutExpired:
-        print("ffprobe timed out while probing the stream.")
+        logger.error("ffprobe timed out while probing the stream.")
     except Exception as e:
-        print(f"Error probing the stream: {e}")
+        logger.error(f"Error probing the stream: {e}")
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
