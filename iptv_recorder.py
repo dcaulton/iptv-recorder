@@ -45,6 +45,21 @@ except DatabaseError as e:
 except Exception as e:
     logger.error(f"Unexpected error during DB test: {e}")
 
+def test_vpn_restart():
+    restart_url = "http://localhost:8080/restart?country=uk"
+    try:
+        response = requests.get(restart_url)
+        response_data = response.json() if response.content else {}
+        if response.status_code != 200 or response_data.get("status") != "started":
+            logger.error(f"Failed to request VPN restart: {response.status_code} - {response_data}")
+            print(f"Restart response: {response_data}")  # Debug print
+            return
+        logger.info("VPN restart request sent successfully.")
+        print(f"Restart response: {response_data}")  # Debug print to see PID if started
+    except Exception as e:
+        logger.error(f"Error requesting VPN restart: {e}")
+        return
+
 def test_vpn_connect_and_stream():
     # Step 1: Request VPN manager to connect to UK (uk)
     connect_url = "http://localhost:8080/connect?country=uk"
@@ -66,7 +81,7 @@ def test_vpn_connect_and_stream():
     # If it's always {}, implement /status in vpn-manager to check process.poll() is None (alive) and parse OpenVPN output for "Initialization Sequence Completed"
     status_url = "http://localhost:8080/status"
     connected = False
-    max_attempts = 60  # Poll every 5 seconds for up to 5 minutes
+    max_attempts = 6  # Poll every 5 seconds for up to 1.2 minutes
     for attempt in range(max_attempts):
         try:
             status_response = requests.get(status_url)
@@ -187,4 +202,5 @@ def scheduler_loop():
 
 if __name__ == "__main__":
     test_vpn_connect_and_stream()
+    test_vpn_restart()
     scheduler_loop()
