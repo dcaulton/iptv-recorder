@@ -46,8 +46,8 @@ except Exception as e:
     logger.error(f"Unexpected error during DB test: {e}")
 
 def test_vpn_connect_and_stream():
-    # Step 1: Request VPN manager to connect to UK (gb)
-    connect_url = "http://localhost:8080/connect?country=gb"
+    # Step 1: Request VPN manager to connect to UK (uk)
+    connect_url = "http://localhost:8080/connect?country=uk"
     try:
         response = requests.get(connect_url)
         response_data = response.json() if response.content else {}
@@ -62,7 +62,7 @@ def test_vpn_connect_and_stream():
         return
 
     # Step 2: Wait for success by polling /status endpoint
-    # Assumption: /status should eventually return something like {"status": "connected", "country": "gb"}
+    # Assumption: /status should eventually return something like {"status": "connected", "country": "uk"}
     # If it's always {}, implement /status in vpn-manager to check process.poll() is None (alive) and parse OpenVPN output for "Initialization Sequence Completed"
     status_url = "http://localhost:8080/status"
     connected = False
@@ -73,7 +73,7 @@ def test_vpn_connect_and_stream():
             status_data = status_response.json() if status_response.content else {}
             logger.info(f"Status check (attempt {attempt + 1}): {status_data}")
             print(f"Status response: {status_data}")  # Debug print
-            if status_data.get("status") == "connected" and status_data.get("country") == "gb":
+            if status_data.get("pid") and status_data.get("country") == "uk":
                 connected = True
                 logger.info("VPN connected successfully to UK.")
                 break
@@ -112,7 +112,7 @@ def test_vpn_connect_and_stream():
 
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
-    if vpn_country == "gb":
+    if vpn_country == "uk":
         return "http://vpn-uk:8080/p/"  # or the proxy's single-stream path
     # Add more for ca, etc.
     return ""  # direct
