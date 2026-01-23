@@ -30,41 +30,28 @@ if not DB_URL:
 engine = create_engine(DB_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
-# Quick connectivity + table test
-logger.info(f"testing Database connection")
-try:
-    with Session() as session:
-        # Simple count query (doesn't care if table is empty)
-        result = session.execute(text("SELECT COUNT(*) FROM schedules"))
-        count = result.scalar()
-        logger.info(f"Database connection OK. Found {count} entries in schedules table.")
-except OperationalError as e:
-    logger.error(f"Connection failed (will retry later): {e}")
-except DatabaseError as e:
-    logger.error(f"Database error (table missing or permission issue?): {e}")
-except Exception as e:
-    logger.error(f"Unexpected error during DB test: {e}")
+VPN_MANAGER_BASE_URL = "http://localhost:8080/"
 
-def test_vpn_restart():
-    restart_url = "http://localhost:8080/restart?country=uk"
+def check_database_connection():
+    # Quick connectivity + table test
+    logger.info(f"testing Database connection")
+    try:
+        with Session() as session:
+            # Simple count query (doesn't care if table is empty)
+            result = session.execute(text("SELECT COUNT(*) FROM schedules"))
+            count = result.scalar()
+            logger.info(f"Database connection OK. Found {count} entries in schedules table.")
+    except OperationalError as e:
+        logger.error(f"Connection failed (will retry later): {e}")
+    except DatabaseError as e:
+        logger.error(f"Database error (table missing or permission issue?): {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error during DB test: {e}")
+
+def vpn_connect(country: str):
+    restart_url = f"{VPN_MANAGER_BASE_URL}restart?country={country}"
     try:
         response = requests.get(restart_url)
-        response_data = response.json() if response.content else {}
-        if response.status_code != 200 or response_data.get("status") != "started":
-            logger.error(f"Failed to request VPN restart: {response.status_code} - {response_data}")
-            print(f"Restart response: {response_data}")  # Debug print
-            return
-        logger.info("VPN restart request sent successfully.")
-        print(f"Restart response: {response_data}")  # Debug print to see PID if started
-    except Exception as e:
-        logger.error(f"Error requesting VPN restart: {e}")
-        return
-
-def test_vpn_connect_and_stream():
-    # Step 1: Request VPN manager to connect to UK (uk)
-    connect_url = "http://localhost:8080/connect?country=uk"
-    try:
-        response = requests.get(connect_url)
         response_data = response.json() if response.content else {}
         if response.status_code != 200 or response_data.get("status") != "started":
             logger.error(f"Failed to request VPN connect: {response.status_code} - {response_data}")
@@ -76,10 +63,14 @@ def test_vpn_connect_and_stream():
         logger.error(f"Error requesting VPN connect: {e}")
         return
 
+def test_vpn_connect_and_stream(country: str):
+    vpn_connect(country)
+
+# TODO make this async with timeout, remove the wait
     # Step 2: Wait for success by polling /status endpoint
     # Assumption: /status should eventually return something like {"status": "connected", "country": "uk"}
     # If it's always {}, implement /status in vpn-manager to check process.poll() is None (alive) and parse OpenVPN output for "Initialization Sequence Completed"
-    status_url = "http://localhost:8080/status"
+    status_url = f"{VPN_MANAGER_BASE_URL}status"
     connected = False
     max_attempts = 6  # Poll every 5 seconds for up to 1.2 minutes
     for attempt in range(max_attempts):
@@ -201,6 +192,7 @@ def scheduler_loop():
         time.sleep(60)  # check every minute
 
 if __name__ == "__main__":
-    test_vpn_connect_and_stream()
-    test_vpn_restart()
+    check_database_connection()
+    test_vpn_connect_and_stream('uk')
+    vpn_restart('uk')
     scheduler_loop()
