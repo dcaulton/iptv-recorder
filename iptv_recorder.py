@@ -32,7 +32,7 @@ Session = sessionmaker(bind=engine)
 
 VPN_MANAGER_BASE_URL = "http://localhost:8080/"
 
-def check_database_connection():
+def verify_database_connection():
     # Quick connectivity + table test
     logger.info(f"testing Database connection")
     try:
@@ -63,32 +63,42 @@ def vpn_connect(country: str):
         logger.error(f"Error requesting VPN connect: {e}")
         return
 
-def test_stream_url(country: str, stream_url: str):
-    status_url = f"{VPN_MANAGER_BASE_URL}status"
+def test_stream_url_with_vpn(country: str, stream_url: str):
     connected = False
-    max_attempts = 6
+    max_attempts = 10
     for attempt in range(max_attempts):
         vpn_connect(country)
-        try:
-            result = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
-                capture_output=True,
-                text=True,
-                timeout=60  # Longer timeout for potential network delays
-            )
-            if result.returncode == 0:
-                logger.info("Successfully probed the stream.")
-                return 0
-            else:
-                logger.error(f"Failed {attempt} to probe the stream (return code {result.returncode}): {result.stderr}")
-                time.sleep(2)
-                continue
-        except subprocess.TimeoutExpired:
-            logger.error("ffprobe timed out while probing the stream.")
-        except Exception as e:
-            logger.error(f"Error probing the stream, aborting: {e}")
+        return_code = probe_stream_url(stream_url)
+        if return_code == 0:
+            return 0
+        elif return_code == 1:  # we got a 403, try another vpn endpoint
+            time.sleep(1)
+            continue
+        elif return_code == 2:
+            return 2
     return 1
     
+def probe_stream_url(stream_url: str):
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
+            capture_output=True,
+            text=True,
+            timeout=60  # Longer timeout for potential network delays
+        )
+        if result.returncode == 0:
+            logger.info("Successfully probed the stream.")
+            return 0
+        else:
+            logger.error(f"Failed attempt to probe the stream (return code {result.returncode}): [{result.stderr.strip()}]")
+            # TODO if it's 403 return 1, else return 2, for now our code assumes 403 if failure, kinda brittle
+            return 1
+    except subprocess.TimeoutExpired:
+        logger.error("ffprobe timed out while probing the stream, aborting")
+    except Exception as e:
+        logger.error(f"Error probing the stream, aborting: {e}")
+    return 2
+
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
     if vpn_country == "uk":
@@ -165,10 +175,15 @@ def scheduler_loop():
         time.sleep(60)  # check every minute
 
 if __name__ == "__main__":
-    check_database_connection()
-    resp = test_stream_url('uk', "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8")
+    verify_database_connection()
+    resp = test_stream_url_with_vpn('uk', "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8")
     if not resp:
-        print('good, now we can download')
+        print('VPN stream OK')
     else:
-        print('we never got a downloadable configuration')
+        print('VPN stream FAILED')
+    resp = probe_stream_url("https://unlimited1-cl-isp.dps.live/ucvtv2/ucvtv2.smil/playlist.m3u8")
+    if not resp:
+        print('Non-VPN stream OK')
+    else:
+        print('Non-VPN stream FAILED')
     scheduler_loop()
