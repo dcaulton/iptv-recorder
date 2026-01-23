@@ -63,59 +63,32 @@ def vpn_connect(country: str):
         logger.error(f"Error requesting VPN connect: {e}")
         return
 
-def test_vpn_connect_and_stream(country: str):
-    vpn_connect(country)
-
-# TODO make this async with timeout, remove the wait
-    # Step 2: Wait for success by polling /status endpoint
-    # Assumption: /status should eventually return something like {"status": "connected", "country": "uk"}
-    # If it's always {}, implement /status in vpn-manager to check process.poll() is None (alive) and parse OpenVPN output for "Initialization Sequence Completed"
+def test_stream_url(country: str, stream_url: str):
     status_url = f"{VPN_MANAGER_BASE_URL}status"
     connected = False
-    max_attempts = 6  # Poll every 5 seconds for up to 1.2 minutes
+    max_attempts = 6
     for attempt in range(max_attempts):
+        vpn_connect(country)
         try:
-            status_response = requests.get(status_url)
-            status_data = status_response.json() if status_response.content else {}
-            logger.info(f"Status check (attempt {attempt + 1}): {status_data}")
-            print(f"Status response: {status_data}")  # Debug print
-            if status_data.get("pid") and status_data.get("country") == "uk":
-                connected = True
-                logger.info("VPN connected successfully to UK.")
-                break
-            elif status_data.get("status") == "failed":
-                logger.error(f"VPN connection failed: {status_data.get('message', 'Unknown error')}")
-                return
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
+                capture_output=True,
+                text=True,
+                timeout=60  # Longer timeout for potential network delays
+            )
+            if result.returncode == 0:
+                logger.info("Successfully probed the stream.")
+                return 0
+            else:
+                logger.error(f"Failed {attempt} to probe the stream (return code {result.returncode}): {result.stderr}")
+                time.sleep(2)
+                continue
+        except subprocess.TimeoutExpired:
+            logger.error("ffprobe timed out while probing the stream.")
         except Exception as e:
-            logger.error(f"Error checking status (attempt {attempt + 1}): {e}")
-        time.sleep(5)
+            logger.error(f"Error probing the stream, aborting: {e}")
+    return 1
     
-    if not connected:
-        logger.error("Failed to confirm VPN connection after polling. Check vpn-manager logs for OpenVPN errors (e.g., auth failure).")
-        print("Tip: NordVPN requires credentials. Ensure vpn-manager provides --auth-user-pass to OpenVPN.")
-        return
-
-    # Step 3: Tune (probe) the BBC Two Northern Ireland stream using ffprobe
-    stream_url = "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8"
-    try:
-        # Run ffprobe to get stream info; -v error suppresses verbose but captures errors
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_format", "-show_streams", stream_url],
-            capture_output=True,
-            text=True,
-            timeout=60  # Longer timeout for potential network delays
-        )
-        if result.returncode == 0:
-            logger.info("Successfully probed the stream.")
-            print("Stream info:\n" + result.stdout)
-        else:
-            logger.error(f"Failed to probe the stream (return code {result.returncode}): {result.stderr}")
-            print(f"Probe error: {result.stderr}")  # Debug print for geo-block or other issues
-    except subprocess.TimeoutExpired:
-        logger.error("ffprobe timed out while probing the stream.")
-    except Exception as e:
-        logger.error(f"Error probing the stream: {e}")
-
 def get_proxy_base(vpn_country):
     # Map vpn_country to proxy container name/IP
     if vpn_country == "uk":
@@ -193,6 +166,9 @@ def scheduler_loop():
 
 if __name__ == "__main__":
     check_database_connection()
-    test_vpn_connect_and_stream('uk')
-    vpn_restart('uk')
+    resp = test_stream_url('uk', "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8")
+    if not resp:
+        print('good, now we can download')
+    else:
+        print('we never got a downloadable configuration')
     scheduler_loop()
