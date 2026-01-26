@@ -194,7 +194,7 @@ def test_two_streams():
 
 
 def load_channels():
-  with open('./channels.json') as file:
+  with open('/channel_files/channels.json') as file:
     global channels
     channels = json.load(file)
     print(f"num chans is [{len(channels)}]")
@@ -202,14 +202,45 @@ def load_channels():
     print(f"100th chan is {channels[100]}")
 
 def load_streams():
-  with open('./streams.json') as file:
+  with open('/channel_files/streams.json') as file:
     global streams
     streams = json.load(file)
     print(f"num streams is [{len(streams)}]")
     print(f"0th stream is {streams[0]}")
     print(f"100th stream is {streams[100]}")
 
-def get_info_for_stream(stream):
+def get_epg_for_channel(channel_id: str, country: str, providers: list) -> list:
+    for provider in providers:  # Try each until match
+        xml_url = f"https://iptv-org.github.io/epg/guides/{country}/{provider}.xml"
+        try:
+            response = requests.get(xml_url, timeout=10)
+            if response.status_code != 200:
+                continue
+            root = ET.fromstring(response.content)
+            # Check if channel exists
+            if any(ch.get('id') == channel_id for ch in root.findall('channel')):
+                programs = []
+                for prog in root.findall('programme'):
+                    if prog.get('channel') == channel_id:
+                        title = prog.find('title').text if prog.find('title') is not None else None
+                        start = prog.get('start')  # e.g., "20260122180000 +0000"
+                        stop = prog.get('stop')
+                        desc = prog.find('desc').text if prog.find('desc') is not None else None
+                        category = [cat.text for cat in prog.findall('category')] if prog.findall('category') else []
+                        programs.append({
+                            'start': start,
+                            'stop': stop,
+                            'title': title,
+                            'desc': desc,
+                            'categories': category
+                        })
+                if programs:  # Found listings
+                    return programs  # List of dicts, sorted by start time naturally
+        except Exception:
+            continue
+    return []  # No EPG found across providers
+
+def get_info_for_stream(stream, id_to_country, id_to_name, name_to_id):
     cid = stream.get('channel')
     if cid:  # Direct match
         return {
@@ -235,7 +266,7 @@ def get_info_for_stream(stream):
         else:
             # Fallback: infer from title/feed/url (optional)
             inferred_country = None
-            if 'uk' in stream['feed'].lower(): inferred_country = 'gb'
+            if stream.get('feed') and 'uk' in stream['feed'].lower(): inferred_country = 'gb'
             # Or parse URL domain, etc.
             return {
                 'id': None,  # Flag as unmatched
@@ -243,17 +274,23 @@ def get_info_for_stream(stream):
                 'name': stream['title']
             }
 
-def scan_for_valid_streams():
+def scan_for_valid_streams(id_to_country, id_to_name, name_to_id):
     # Your scanning loop
     valid_streams = []  # For ones with ID/country/EPG
-    for stream in streams_data:
-        info = get_info_for_stream(stream)
+    scanned_count = 0
+    valid_count = 0
+    for stream in streams:
+        scanned_count += 1
+        if scanned_count % 50 == 0:
+            print(f"scanning {scanned_count} of [{len(streams)}] - {valid_count} valid so far")
+        info = get_info_for_stream(stream, id_to_country, id_to_name, name_to_id)
         if info['id']:  # Has universal ID
             # Get EPG (from previous code)
             country = info['country'].lower() if info['country'] else ''
             providers = []  # Fetch from SITES.md as before
             epg = get_epg_for_channel(info['id'], country, providers)
             if epg:
+                valid_count += 1
                 valid_streams.append({
                     'stream_url': stream['url'],
                     'id': info['id'],
@@ -270,8 +307,15 @@ if __name__ == "__main__":
     verify_database_connection()
     load_channels()
     load_streams()
+    with open('/channel_files/test.json', 'w') as file:
+        file.write(json.dumps({'ooga': 'booga'}))
+    id_to_country = {ch['id']: ch.get('country') for ch in channels}
+    id_to_name = {ch['id']: ch['name'] for ch in channels}
+    name_to_id = {ch['name'].lower(): ch['id'] for ch in channels}
 
-    valid_streams = scan_for_valid_streams()
+    valid_streams = scan_for_valid_streams(id_to_country, id_to_name, name_to_id)
+    with open('/channel_files/valid_streams.json', 'w') as file:
+        file.write(json.dumps(valid_streams))
 
 
 #    test_two_streams()
