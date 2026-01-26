@@ -7,9 +7,12 @@ import logging
 import sys
 import os
 import subprocess
+import json
 import time
 import requests
 import threading
+from collections import defaultdict
+from difflib import SequenceMatcher
 
 print(f"just waking up")
 # Force logging to stdout (Docker-friendly), level INFO
@@ -31,6 +34,9 @@ engine = create_engine(DB_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
 VPN_MANAGER_BASE_URL = "http://localhost:8080/"
+
+channels = []
+streams = []
 
 def verify_database_connection():
     # Quick connectivity + table test
@@ -174,8 +180,7 @@ def scheduler_loop():
         session.close()
         time.sleep(60)  # check every minute
 
-if __name__ == "__main__":
-    verify_database_connection()
+def test_two_streams():
     resp = test_stream_url_with_vpn('uk', "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8")
     if not resp:
         print('VPN stream OK')
@@ -186,4 +191,88 @@ if __name__ == "__main__":
         print('Non-VPN stream OK')
     else:
         print('Non-VPN stream FAILED')
-    scheduler_loop()
+
+
+def load_channels():
+  with open('./channels.json') as file:
+    global channels
+    channels = json.load(file)
+    print(f"num chans is [{len(channels)}]")
+    print(f"0th chan is {channels[0]}")
+    print(f"100th chan is {channels[100]}")
+
+def load_streams():
+  with open('./streams.json') as file:
+    global streams
+    streams = json.load(file)
+    print(f"num streams is [{len(streams)}]")
+    print(f"0th stream is {streams[0]}")
+    print(f"100th stream is {streams[100]}")
+
+def get_info_for_stream(stream):
+    cid = stream.get('channel')
+    if cid:  # Direct match
+        return {
+            'id': cid,
+            'country': id_to_country.get(cid),
+            'name': id_to_name.get(cid)
+        }
+    else:  # Fuzzy match title to channels.json name
+        title_clean = stream['title'].lower().replace(' hd', '').replace(' sd', '').replace(' tv', '').replace(' channel', '').strip()
+        best_id = None
+        best_score = 0
+        for name_lower, possible_id in name_to_id.items():
+            score = SequenceMatcher(None, title_clean, name_lower).ratio()
+            if score > best_score and score >= 0.85:  # Threshold: adjust lower if too strict
+                best_score = score
+                best_id = possible_id
+        if best_id:
+            return {
+                'id': best_id,
+                'country': id_to_country.get(best_id),
+                'name': id_to_name.get(best_id)
+            }
+        else:
+            # Fallback: infer from title/feed/url (optional)
+            inferred_country = None
+            if 'uk' in stream['feed'].lower(): inferred_country = 'gb'
+            # Or parse URL domain, etc.
+            return {
+                'id': None,  # Flag as unmatched
+                'country': inferred_country,
+                'name': stream['title']
+            }
+
+def scan_for_valid_streams():
+    # Your scanning loop
+    valid_streams = []  # For ones with ID/country/EPG
+    for stream in streams_data:
+        info = get_info_for_stream(stream)
+        if info['id']:  # Has universal ID
+            # Get EPG (from previous code)
+            country = info['country'].lower() if info['country'] else ''
+            providers = []  # Fetch from SITES.md as before
+            epg = get_epg_for_channel(info['id'], country, providers)
+            if epg:
+                valid_streams.append({
+                    'stream_url': stream['url'],
+                    'id': info['id'],
+                    'country': info['country'],
+                    'name': info['name'],
+                    'epg_count': len(epg)
+                })
+        # Else: skip as useless
+
+    print(f"Valid streams with EPG: {len(valid_streams)}")
+    return valid_streams
+
+if __name__ == "__main__":
+    verify_database_connection()
+    load_channels()
+    load_streams()
+
+    valid_streams = scan_for_valid_streams()
+
+
+#    test_two_streams()
+#    scheduler_loop()

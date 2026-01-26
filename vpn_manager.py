@@ -31,7 +31,6 @@ app = FastAPI()
 @app.get("/connect")
 def connect(country: str):
     global vpn_info
-    ovpn_file = f"/configs/uk1699.nordvpn.com.udp.ovpn"
     if vpn_info:
         err_msg = 'vpn already running, you need to shut it down first'
         logger.info(err_msg)
