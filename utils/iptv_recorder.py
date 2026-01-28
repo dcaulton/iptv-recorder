@@ -11,7 +11,7 @@ import threading
 from collections import defaultdict
 from difflib import SequenceMatcher
 from .database_connection import DatabaseConnection
-from .vpn_manager import VpnManager
+from .vpn_manager_util import VpnManager
 
 
 
