@@ -1,7 +1,4 @@
 from tv_detection_common.models import Channel, Schedule, Recording, RecordingStatus
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import OperationalError, DatabaseError
 from datetime import datetime, timedelta, timezone
 import logging
 import sys
@@ -13,10 +10,10 @@ import requests
 import threading
 from collections import defaultdict
 from difflib import SequenceMatcher
-import xml.etree.ElementTree as ET
+from utils.database_connection import DatabaseConnection
 
-print(f"just waking up")
-# Force logging to stdout (Docker-friendly), level INFO
+
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -24,15 +21,9 @@ logging.basicConfig(
     force=True          # override any existing config
 )
 logger = logging.getLogger(__name__)
-logger.info(f"just waking up in the logger")
+logger.info(f"starting...")
 
-# Config
-DB_URL = os.getenv("DB_URL")
-if not DB_URL:
-    logger.error("DB_URL environment variable not set. Exiting.")
-    exit(1)
-engine = create_engine(DB_URL, echo=False)
-Session = sessionmaker(bind=engine)
+db_conn = DatabaseConnection(logger=logger, test_conn=True)
 
 VPN_MANAGER_BASE_URL = "http://localhost:8080/"
 
@@ -40,22 +31,6 @@ channels = []
 streams = []
 countries = []
 md_text = ''
-
-def verify_database_connection():
-    # Quick connectivity + table test
-    logger.info(f"testing Database connection")
-    try:
-        with Session() as session:
-            # Simple count query (doesn't care if table is empty)
-            result = session.execute(text("SELECT COUNT(*) FROM schedules"))
-            count = result.scalar()
-            logger.info(f"Database connection OK. Found {count} entries in schedules table.")
-    except OperationalError as e:
-        logger.error(f"Connection failed (will retry later): {e}")
-    except DatabaseError as e:
-        logger.error(f"Database error (table missing or permission issue?): {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error during DB test: {e}")
 
 def vpn_connect(country: str):
     restart_url = f"{VPN_MANAGER_BASE_URL}restart?country={country}"
@@ -116,7 +91,7 @@ def get_proxy_base(vpn_country):
     return ""  # direct
 
 def record_stream(schedule_id):
-    session = Session()
+    session = db_conn.Session()
     schedule = session.query(Schedule).get(schedule_id)
     if not schedule:
         return
@@ -166,7 +141,7 @@ def record_stream(schedule_id):
 def scheduler_loop():
     print("entering scheduler loop")
     while True:
-        session = Session()
+        session = db_conn.Session()
         now = datetime.now(timezone.utc)
         pending = session.query(Schedule).filter(Schedule.start_time <= now + timedelta(minutes=5), Schedule.start_time > now - timedelta(minutes=5)).all()
 
@@ -322,7 +297,6 @@ def scan_for_valid_streams(id_to_country, id_to_name, name_to_id, country_to_pro
     return valid_streams
 
 if __name__ == "__main__":
-    verify_database_connection()
     load_channels_etc()
     id_to_country = {ch['id']: ch.get('country') for ch in channels}
     id_to_name = {ch['id']: ch['name'] for ch in channels}
@@ -331,10 +305,10 @@ if __name__ == "__main__":
     name_to_code = {v: k for k, v in code_to_name.items()}  # Reverse for parsing
     country_to_providers = parse_sites()
     xml_dir_map = {'gb': 'uk'}
-    valid_streams = scan_for_valid_streams(id_to_country, id_to_name, name_to_id, country_to_providers)
-
-    with open('/channel_files/valid_streams.json', 'w') as file:
-        file.write(json.dumps(valid_streams))
+#    valid_streams = scan_for_valid_streams(id_to_country, id_to_name, name_to_id, country_to_providers)
+#
+#    with open('/channel_files/valid_streams.json', 'w') as file:
+#        file.write(json.dumps(valid_streams))
 
 
 #    test_two_streams()
