@@ -13,6 +13,7 @@ import requests
 import threading
 from collections import defaultdict
 from difflib import SequenceMatcher
+import xml.etree.ElementTree as ET
 
 print(f"just waking up")
 # Force logging to stdout (Docker-friendly), level INFO
@@ -37,6 +38,8 @@ VPN_MANAGER_BASE_URL = "http://localhost:8080/"
 
 channels = []
 streams = []
+countries = []
+md_text = ''
 
 def verify_database_connection():
     # Quick connectivity + table test
@@ -193,25 +196,50 @@ def test_two_streams():
         print('Non-VPN stream FAILED')
 
 
-def load_channels():
+def load_channels_etc():
   with open('/channel_files/channels.json') as file:
-    global channels
+    global channels_data
     channels = json.load(file)
     print(f"num chans is [{len(channels)}]")
-    print(f"0th chan is {channels[0]}")
-    print(f"100th chan is {channels[100]}")
 
-def load_streams():
   with open('/channel_files/streams.json') as file:
     global streams
     streams = json.load(file)
     print(f"num streams is [{len(streams)}]")
-    print(f"0th stream is {streams[0]}")
-    print(f"100th stream is {streams[100]}")
+
+  with open('/channel_files/countries.json') as file:
+    global countries 
+    countries = json.load(file)
+    print(f"num countries is [{len(countries)}]")
+
+  with open('/channel_files/sites.md') as file:
+    global md_text
+    md_text = ''.join(file.readlines())
+
+def parse_sites():
+    country_to_providers = defaultdict(list)
+    current_country = None
+    for line in md_text.splitlines():
+        if line.startswith('## '):
+            current_country = line.strip('# ').lower()
+            code = name_to_code.get(current_country)  # e.g., 'united kingdom' → 'gb'
+            if code:
+                current_code = code
+        elif line.startswith('- '):
+            provider = line.strip('- `').rstrip('`')
+            if current_code:
+                country_to_providers[current_code].append(provider)
+    return country_to_providers
+
 
 def get_epg_for_channel(channel_id: str, country: str, providers: list) -> list:
-    for provider in providers:  # Try each until match
-        xml_url = f"https://iptv-org.github.io/epg/guides/{country}/{provider}.xml"
+    if not providers:
+        logger.info(f"No providers found for country '{country}' - skipping EPG for {channel_id}")
+        return []
+    logger.debug(f"Attempting EPG for {channel_id} in {country} with providers: {providers}")
+    for provider in providers:
+        xml_url = f"https://iptv-org.github.io/epg/guides/{xml_dir_map.get(country, country)}/{provider}.xml"
+        logger.debug(f"Trying {xml_url}")
         try:
             response = requests.get(xml_url, timeout=10)
             if response.status_code != 200:
@@ -254,7 +282,7 @@ def get_info_for_stream(stream, id_to_country, id_to_name, name_to_id):
         best_score = 0
         for name_lower, possible_id in name_to_id.items():
             score = SequenceMatcher(None, title_clean, name_lower).ratio()
-            if score > best_score and score >= 0.85:  # Threshold: adjust lower if too strict
+            if score > best_score and score >= 0.75:
                 best_score = score
                 best_id = possible_id
         if best_id:
@@ -264,30 +292,20 @@ def get_info_for_stream(stream, id_to_country, id_to_name, name_to_id):
                 'name': id_to_name.get(best_id)
             }
         else:
-            # Fallback: infer from title/feed/url (optional)
-            inferred_country = None
-            if stream.get('feed') and 'uk' in stream['feed'].lower(): inferred_country = 'gb'
-            # Or parse URL domain, etc.
             return {
-                'id': None,  # Flag as unmatched
-                'country': inferred_country,
+                'id': None,
+                'country': None,
                 'name': stream['title']
             }
 
-def scan_for_valid_streams(id_to_country, id_to_name, name_to_id):
-    # Your scanning loop
-    valid_streams = []  # For ones with ID/country/EPG
-    scanned_count = 0
-    valid_count = 0
+def scan_for_valid_streams(id_to_country, id_to_name, name_to_id, country_to_providers):
+    # ...
     for stream in streams:
-        scanned_count += 1
-        if scanned_count % 50 == 0:
-            print(f"scanning {scanned_count} of [{len(streams)}] - {valid_count} valid so far")
+        # ...
         info = get_info_for_stream(stream, id_to_country, id_to_name, name_to_id)
         if info['id']:  # Has universal ID
-            # Get EPG (from previous code)
             country = info['country'].lower() if info['country'] else ''
-            providers = []  # Fetch from SITES.md as before
+            providers = country_to_providers.get(country, [])  # ← use the dict here!
             epg = get_epg_for_channel(info['id'], country, providers)
             if epg:
                 valid_count += 1
@@ -305,15 +323,16 @@ def scan_for_valid_streams(id_to_country, id_to_name, name_to_id):
 
 if __name__ == "__main__":
     verify_database_connection()
-    load_channels()
-    load_streams()
-    with open('/channel_files/test.json', 'w') as file:
-        file.write(json.dumps({'ooga': 'booga'}))
+    load_channels_etc()
     id_to_country = {ch['id']: ch.get('country') for ch in channels}
     id_to_name = {ch['id']: ch['name'] for ch in channels}
     name_to_id = {ch['name'].lower(): ch['id'] for ch in channels}
+    code_to_name = {ch['code'].lower(): ch['name'].lower() for ch in countries}
+    name_to_code = {v: k for k, v in code_to_name.items()}  # Reverse for parsing
+    country_to_providers = parse_sites()
+    xml_dir_map = {'gb': 'uk'}
+    valid_streams = scan_for_valid_streams(id_to_country, id_to_name, name_to_id, country_to_providers)
 
-    valid_streams = scan_for_valid_streams(id_to_country, id_to_name, name_to_id)
     with open('/channel_files/valid_streams.json', 'w') as file:
         file.write(json.dumps(valid_streams))
 
