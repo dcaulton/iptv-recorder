@@ -14,5 +14,9 @@ logger.info(f"starting...")
 iptv_recorder = IptvRecorder(logger)
 
 if __name__ == "__main__":
-    iptv_recorder.scan_for_valid_streams()
+    iptv_recorder.narrow_channels('uk')
+    iptv_recorder.streams_for_channels()
+#    iptv_recorder.scan_for_valid_streams()
+#    iptv_recorder.scan_for_valid_streams(country_in='gb')
+#    iptv_recorder.scan_for_valid_streams(country_in='uk')
     iptv_recorder.main_loop()

@@ -25,14 +25,20 @@ class IptvRecorder():
         self.countries = []
         self.md_text = ''
         self.load_channels_etc()
+        self.build_channel_lookups()
         self.id_to_country = {ch['id']: ch.get('country') for ch in self.channels}
         self.id_to_name = {ch['id']: ch['name'] for ch in self.channels}
         self.name_to_id = {ch['name'].lower(): ch['id'] for ch in self.channels}
         self.code_to_name = {ch['code'].lower(): ch['name'].lower() for ch in self.countries}
         self.name_to_code = {v: k for k, v in self.code_to_name.items()}  # Reverse for parsing
-        self.country_to_providers = self.parse_sites()
+        self.country_to_providers = {}
+#        self.country_to_providers = self.parse_sites()
         self.xml_dir_map = {'gb': 'uk'}
 
+    def build_channel_lookups(self):
+        self.id_to_country = {ch['id']: ch.get('country') for ch in self.channels}
+        self.id_to_name = {ch['id']: ch['name'] for ch in self.channels}
+        self.name_to_id = {ch['name'].lower(): ch['id'] for ch in self.channels}
 
     def main_loop(self):
         self.logger.info("entering scheduler loop")
@@ -58,46 +64,96 @@ class IptvRecorder():
         self.logger.info("testing two streams")
         resp = self.vpn_manager.test_stream_url_with_vpn('uk', "https://vs-hls-pushb-uk-live.akamaized.net/x=4/i=urn:bbc:pips:service:bbc_two_northern_ireland_hd/pc_hd_abr_v2.m3u8")
         if not resp:
-            print('VPN stream OK')
+            self.logger.info('VPN stream OK')
         else:
-            print('VPN stream FAILED')
+            self.logger.info('VPN stream FAILED')
         resp = self.vpn_manager.probe_stream_url("https://unlimited1-cl-isp.dps.live/ucvtv2/ucvtv2.smil/playlist.m3u8")
         if not resp:
-            print('Non-VPN stream OK')
+            self.logger.info('Non-VPN stream OK')
         else:
-            print('Non-VPN stream FAILED')
+            self.logger.info('Non-VPN stream FAILED')
+
+    def narrow_channels(self, country_id):
+        self.logger.info(f"narrowing channels to {country_id}")
+        self.logger.info(f"channel count before: [{len(self.channels)}]")
+        self.channels = [x for x in self.channels if x.get('country').upper() == country_id.upper()]
+        self.logger.info(f"channel count after: [{len(self.channels)}]")
+        self.build_channel_lookups()
+
+    def streams_for_channels(self):
+        sfc = [x for x in self.streams if x.get('channel') in self.id_to_name.keys()]
+        self.logger.info(f"[{len(sfc)}] streams exactly matching channel ids")
+        channel_ids_to_streams = {}
+        sfc2 = []
+        counter = 0
+        for stream in self.streams:
+            counter += 1
+            if counter % 100 == 0: self.logger.info(f'considering stream {counter} of [{len(self.streams)}]')
+            best_score = 0
+            best_id = None
+            best_channel = None
+            title_clean = stream['title'].lower().replace(' hd', '').replace(' sd', '').replace(' tv', '').replace(' channel', '').strip()
+            for name_lower in self.name_to_id.keys():
+                score = SequenceMatcher(None, title_clean, name_lower).ratio()
+                if score > best_score and score >= .8:
+                    best_score = score
+                    best_id = self.name_to_id[name_lower]
+            if best_score:
+                if best_id in channel_ids_to_streams:
+                    channel_ids_to_streams[best_id]['streams'].append(stream)
+                else:
+                    channel_ids_to_streams[best_id] = {'streams': [stream]}
+                sfc2.append(stream)
+        # TODO add channel to the structure 
+        self.logger.info(f"[{len(sfc2)}] additional streams roughly matching channel ids")
+        loosely_mapped_streams_path = '/channel_files/loosely_mapped_streams.json'
+        indented_map = json.dumps(channel_ids_to_streams, indent=2)
+        with open(loosely_mapped_streams_path, 'w') as outfile:
+            print_str = json.dumps(channel_ids_to_streams, indent=2)
+            outfile.write(print_str)
 
     def load_channels_etc(self):
       self.logger.info("loading channels")
       with open('/channel_files/channels.json') as file:
         self.channels = json.load(file)
-        print(f"num chans is [{len(self.channels)}]")
+        self.logger.info(f"num chans is [{len(self.channels)}]")
 
       with open('/channel_files/streams.json') as file:
         self.streams = json.load(file)
-        print(f"num streams is [{len(self.streams)}]")
+        self.logger.info(f"num streams is [{len(self.streams)}]")
 
       with open('/channel_files/countries.json') as file:
         self.countries = json.load(file)
-        print(f"num countries is [{len(self.countries)}]")
+        self.logger.info(f"num countries is [{len(self.countries)}]")
 
       with open('/channel_files/sites.md') as file:
         self.md_text = ''.join(file.readlines())
 
     def parse_sites(self):
         self.logger.info("parsing sites")
-        country_to_providers = defaultdict(list)
-        current_country = None
-        for line in self.md_text.splitlines():
-            if line.startswith('## '):
-                current_country = line.strip('# ').lower()
-                code = name_to_code.get(current_country)  # e.g., 'united kingdom' → 'gb'
-                if code:
-                    current_code = code
-            elif line.startswith('- '):
-                provider = line.strip('- `').rstrip('`')
-                if current_code:
-                    country_to_providers[current_code].append(provider)
+        country_to_providers_path = '/channel_files/country_to_providers.json'
+        if os.path.isfile(country_to_providers_path):
+            self.logger.info("prebuilt file found")
+            country_to_providers = json.load(country_to_providers_path)
+        else:
+            country_to_providers = defaultdict(list)
+            current_country = None
+            for line in self.md_text.splitlines():
+                if line.startswith('## '):
+                    current_country = line.strip('# ').lower()
+                    code = name_to_code.get(current_country)  # e.g., 'united kingdom' → 'gb'
+                    if code:
+                        current_code = code
+                elif line.startswith('- '):
+                    provider = line.strip('- `').rstrip('`')
+                    if current_code:
+                        country_to_providers[current_code].append(provider)
+            with open(country_to_providers_path, 'w') as outfile:
+                print_str = json.dumps(country_to_providers)
+                outfile.write(print_str)
+        titles = [x.get('title') for x in country_to_providers]
+        titles = sorted(set(titles))
+        self.logger.info(f"parsed sites for these titles: {titles}")
         return country_to_providers
 
     def get_info_for_stream(self, stream):
@@ -131,11 +187,12 @@ class IptvRecorder():
                     'name': stream['title']
                 }
 
-    def scan_for_valid_streams(self):
-        self.logger.info("scanning for valid streams")
+    def scan_for_valid_streams(self, country_in=None):
+        self.logger.info(f"scanning for valid streams for country {country_in}")
         for stream in self.streams:
-            # ...
             info = self.get_info_for_stream(stream)
+            if country_in and info and info.get('country') != country_in:
+                continue
             if info['id']:  # Has universal ID
                 country = info['country'].lower() if info['country'] else ''
                 providers = self.country_to_providers.get(country, [])  # ← use the dict here!
@@ -151,7 +208,7 @@ class IptvRecorder():
                     })
             # Else: skip as useless
 
-        print(f"Valid streams with EPG: {len(valid_streams)}")
+        self.logger.info(f"Valid streams with EPG: {len(valid_streams)}")
         return valid_streams
 
     def get_epg_for_channel(self, channel_id: str, country: str, providers: list) -> list:
