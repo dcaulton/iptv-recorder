@@ -67,10 +67,14 @@ class IptvRecorder():
             time.sleep(3600)  # check every hour
 
     def test_channels_with_streams(self, country_code):
+        # TODO we have to manage this in blocks
         vpn_results = {}
+        total_limit = 20
+        total_count = 0
         time_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
         self.logger.info(f"testing channels with streams for country {country_code} at {time_str}")
         for channel_id in self.channels_with_streams:
+            if total_count >= total_limit: break
             vpn_results[channel_id] = []
             channel = self.channels_with_streams[channel_id]['channel']
             self.logger.info(f"-- testing  channel {channel_id}")
@@ -85,6 +89,7 @@ class IptvRecorder():
                     self.logger.info('---- FAIL')
                     vpn_results[channel_id].append('FAIL')
                 counter += 1
+                total_count += 1
         for channel_id in vpn_results:
             time_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
             for result_code, index in enumerate(vpn_results[channel_id]):

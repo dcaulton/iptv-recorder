@@ -2,6 +2,7 @@ import logging
 import sys
 from utils.iptv_recorder import IptvRecorder
 
+#TODO have a separate logger for iptv-recorder and vpn-manager, we need custom log levels
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
