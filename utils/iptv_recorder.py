@@ -14,7 +14,6 @@ from .database_connection import DatabaseConnection
 from .vpn_manager_util import VpnManager
 
 
-
 class IptvRecorder():
     def __init__(self, logger):
         self.logger = logger
@@ -22,6 +21,7 @@ class IptvRecorder():
         self.vpn_manager = VpnManager(self.logger)
         self.channels = []
         self.streams = []
+        self.channels_with_streams = {}
         self.countries = []
         self.md_text = ''
         self.load_channels_etc()
@@ -59,6 +59,29 @@ class IptvRecorder():
 
             session.close()
             time.sleep(60)  # check every minute
+
+    def test_channels_with_streams(self, country_code):
+        vpn_results = {}
+        self.logger.info(f"testing channels with streams for country {country_code}")
+        for channel_id in self.channels_with_streams:
+            vpn_results[channel_id] = []
+            channel = self.channels_with_streams[channel_id]['channel']
+            self.logger.info(f"-- testing  channel {channel_id}")
+            counter = 0
+            for stream in self.channels_with_streams[channel_id]['streams']:
+                print(f"--- testing stream {counter}")
+                resp = self.vpn_manager.test_stream_url_with_vpn(country_code, stream.get('url'))
+                if not resp:
+                    self.logger.info('---- OK')
+                    vpn_results[channel_id].append('OK')
+                else:
+                    self.logger.info('---- FAIL')
+                    vpn_results[channel_id].append('FAIL')
+                counter += 1
+        for channel_id in vpn_results:
+            for result_code, index in enumerate(vpn_results[channel_id]):
+                self.channels_with_streams[channel_id]['streams'][index] = result_code
+        self.write_channels_with_streams()
 
     def test_two_streams(self):
         self.logger.info("testing two streams")
@@ -104,12 +127,19 @@ class IptvRecorder():
                 else:
                     channel_ids_to_streams[best_id] = {'streams': [stream]}
                 sfc2.append(stream)
-        # TODO add channel to the structure 
+        # add channel to the structure 
+        for channel in self.channels:
+            if channel['id'] in channel_ids_to_streams.keys():
+                channel_ids_to_streams[channel['id']]['channel'] = channel
+
+        self.channels_with_streams = channel_ids_to_streams
         self.logger.info(f"[{len(sfc2)}] additional streams roughly matching channel ids")
-        loosely_mapped_streams_path = '/channel_files/loosely_mapped_streams.json'
-        indented_map = json.dumps(channel_ids_to_streams, indent=2)
-        with open(loosely_mapped_streams_path, 'w') as outfile:
-            print_str = json.dumps(channel_ids_to_streams, indent=2)
+        self.write_channels_with_streams()
+
+    def write_channels_with_streams(self):
+        channels_with_streams_path = '/channel_files/channels_with_streams.json'
+        with open(channels_with_streams_path, 'w') as outfile:
+            print_str = json.dumps(self.channels_with_streams, indent=2)
             outfile.write(print_str)
 
     def load_channels_etc(self):
