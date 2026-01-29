@@ -60,9 +60,16 @@ class IptvRecorder():
             session.close()
             time.sleep(60)  # check every minute
 
+    def snooze_loop(self):
+        self.logger.info("entering snooze loop")
+        while True:
+            self.logger.info("zzz for an hour")
+            time.sleep(3600)  # check every hour
+
     def test_channels_with_streams(self, country_code):
         vpn_results = {}
-        self.logger.info(f"testing channels with streams for country {country_code}")
+        time_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
+        self.logger.info(f"testing channels with streams for country {country_code} at {time_str}")
         for channel_id in self.channels_with_streams:
             vpn_results[channel_id] = []
             channel = self.channels_with_streams[channel_id]['channel']
@@ -79,8 +86,10 @@ class IptvRecorder():
                     vpn_results[channel_id].append('FAIL')
                 counter += 1
         for channel_id in vpn_results:
+            time_str = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
             for result_code, index in enumerate(vpn_results[channel_id]):
-                self.channels_with_streams[channel_id]['streams'][index] = result_code
+                self.channels_with_streams[channel_id]['streams'][index]['connect_status'] = result_code
+                self.channels_with_streams[channel_id]['streams'][index]['connect_test_time'] = time_str
         self.write_channels_with_streams()
 
     def test_two_streams(self):
