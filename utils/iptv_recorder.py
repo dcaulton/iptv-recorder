@@ -24,6 +24,7 @@ class IptvRecorder():
         self.channels_with_streams = {}
         self.countries = []
         self.md_text = ''
+        self.sd_iptv_channels_lookup = []
         self.load_channels_etc()
         self.build_channel_lookups()
         self.id_to_country = {ch['id']: ch.get('country') for ch in self.channels}
@@ -31,6 +32,7 @@ class IptvRecorder():
         self.name_to_id = {ch['name'].lower(): ch['id'] for ch in self.channels}
         self.code_to_name = {ch['code'].lower(): ch['name'].lower() for ch in self.countries}
         self.name_to_code = {v: k for k, v in self.code_to_name.items()}  # Reverse for parsing
+        self.iptv_id_to_sd_id = {ch['iptv_id']: ch['sd_id'] for ch in self.self.sd_iptv_channels_lookup}
         self.country_to_providers = {}
 #        self.country_to_providers = self.parse_sites()
         self.xml_dir_map = {'gb': 'uk'}
@@ -172,6 +174,10 @@ class IptvRecorder():
 
       with open('/channel_files/sites.md') as file:
         self.md_text = ''.join(file.readlines())
+
+      with open('/channel_files/sd_iptv_channels_lookup.json') as file:
+        self.sd_iptv_channels_lookup = json.load(file)
+        self.logger.info(f"num sd lookups is [{len(self.sd_iptv_channels_lookup)}]")
 
     def parse_sites(self):
         self.logger.info("parsing sites")
